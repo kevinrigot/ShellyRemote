@@ -3,15 +3,12 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <RotaryEncoder.h>
-#include <shelly-dimmer.h>
 #include <JeVe_EasyOTA.h>
+#include <shelly-dimmer.h>
 
+const boolean DEBUG = false;
 const String APP_NAME = "ShellyDimmerRemoteRotary - " __FILE__;
-const String APP_VERSION = "v0.2-" __DATE__ " " __TIME__;
-
-#define DEVICE_ID "shelly_remote"
-EasyOTA OTA(DEVICE_ID);
-const String device_id = DEVICE_ID;
+const String APP_VERSION = "v1.0-" __DATE__ " " __TIME__;
 
 /** Wifi config */
 #ifndef WIFI_SSID
@@ -23,6 +20,11 @@ const String device_id = DEVICE_ID;
 #ifndef LOCAL_IP
 #define LOCAL_IP "(LOCAL_IP not defined)"
 #endif
+#ifndef DEVICE_ID
+#define DEVICE_ID "shelly_remote"
+#endif
+EasyOTA OTA(DEVICE_ID);
+const String device_id = DEVICE_ID;
 IPAddress gateway(192, 168, 1, 1);
 IPAddress subnet(255, 255, 0, 0);
 WiFiClient client;
@@ -46,8 +48,8 @@ PubSubClient mqttClient(mqttWifiClient);
 
 
 /** Pin config*/
-#define PIN_IN1 D5
-#define PIN_IN2 D6
+#define PIN_IN1 D6
+#define PIN_IN2 D5
 #define PIN_LED D7
 #define PIN_BUTTON D8
 
@@ -88,24 +90,29 @@ boolean deepSleepNow = false;
 
 String debugTemp = "";
 void debug(String message){
+  if(!DEBUG)return;
   Serial.print(message);
   debugTemp += message;
 }
 void debug(int message){
+  if(!DEBUG)return;
   Serial.print(message);
   debugTemp += message;
 }
 void debug(float message){
+  if(!DEBUG)return;
   Serial.print(message);
   debugTemp += message;
 }
 void debugln(String message){
+  if(!DEBUG)return;
   Serial.println(message);
   debugTemp += message;
   mqttClient.publish(debugTopic.c_str(), debugTemp.c_str());
   debugTemp = "";
 }
 void debugln(float message){
+  if(!DEBUG)return;
   Serial.println(message);
   debugTemp += message;
   mqttClient.publish(debugTopic.c_str(), debugTemp.c_str());
@@ -231,6 +238,9 @@ void setup() {
   digitalWrite(PIN_LED, isActive ? HIGH : LOW);
 }
 
+const int MAX_BRIGHTNESS = 100;
+const int MIN_BRIGHTNESS = 2;
+
 int getNewBrightness(int previousBrightness, int changePos){
   if(changePos == 0)return previousBrightness;
   int brightnessChange = 0;
@@ -252,13 +262,14 @@ int getNewBrightness(int previousBrightness, int changePos){
         break;          
   }
   if(changePos > 0){
-    return min(previousBrightness + brightnessChange, 100);
+    return min(previousBrightness + brightnessChange, MAX_BRIGHTNESS);
   }else{
-    return max(previousBrightness - brightnessChange, 0);
+    return max(previousBrightness - brightnessChange, MIN_BRIGHTNESS);
   }
   
 }
 
+const float VOLTAGE_CUTOFF = 3.5;
 
 void loop() {
   //MQTT Connection - keep alive
@@ -293,8 +304,11 @@ void loop() {
     dtostrf(voltage, 6, 2, result); // Leave room for too large numbers!
     if(mqttClient.connected()){
       mqttClient.publish(voltageTopic.c_str(), result, true);
+      if(voltage < VOLTAGE_CUTOFF){
+        mqttClient.publish(statusTopic.c_str(), "offline - low battery", true);
+      }
     }
-    if(voltage < 3.5){
+    if(voltage < VOLTAGE_CUTOFF){
       mqttClient.publish(statusTopic.c_str(), "offline - low battery", true);
       deepSleepOn = true;
       blink(4);      
@@ -331,6 +345,9 @@ void loop() {
     changeDetected = false;
     previousBrightness = getNewBrightness(previousBrightness, newPos - previousPos);
     shellyDimmerService->sendAction(isActive, previousBrightness);  
+    if(previousBrightness == MAX_BRIGHTNESS || previousBrightness == MIN_BRIGHTNESS){
+      blink(3);
+    }
     previousPos = newPos;    
     previousIsActive = isActive;
   }
